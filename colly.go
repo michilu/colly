@@ -86,6 +86,8 @@ type Collector struct {
 	// CacheDir specifies a location where GET requests are cached as files.
 	// When it's not defined, caching is disabled.
 	CacheDir string
+	// CacheHandler specifies the caching handling.
+	CacheHandle CacheHandleFunc
 	// IgnoreRobotsTxt allows the Collector to ignore any restrictions set by
 	// the target host's robots.txt file.  See http://www.robotstxt.org/ for more
 	// information.
@@ -322,6 +324,13 @@ func CacheDir(path string) func(*Collector) {
 	}
 }
 
+// CacheHandle specifies the caching handling.
+func CacheHandle(f NewCacheHandler) func(*Collector) {
+	return func(c *Collector) {
+		c.CacheHandle = f(c).CacheHandle
+	}
+}
+
 // IgnoreRobotsTxt instructs the Collector to ignore any restrictions
 // set by the target host's robots.txt file.
 func IgnoreRobotsTxt() func(*Collector) {
@@ -377,6 +386,7 @@ func (c *Collector) Init() {
 	c.robotsMap = make(map[string]*robotstxt.RobotsData)
 	c.IgnoreRobotsTxt = true
 	c.ID = atomic.AddUint32(&collectorCounter, 1)
+	CacheHandle(NewDefaultCacheHandler)(c)
 }
 
 // Appengine will replace the Collector's backend http.Client
@@ -586,7 +596,7 @@ func (c *Collector) fetch(u, method string, depth int, requestData io.Reader, ct
 	}
 
 	origURL := req.URL
-	response, err := c.backend.Cache(req, c.MaxBodySize, c.CacheDir)
+	response, err := c.backend.Cache(req, c.MaxBodySize, c.CacheHandle)
 	if err := c.handleOnError(response, err, request, ctx); err != nil {
 		return err
 	}
@@ -1097,6 +1107,7 @@ func (c *Collector) Clone() *Collector {
 		AllowedDomains:         c.AllowedDomains,
 		AllowURLRevisit:        c.AllowURLRevisit,
 		CacheDir:               c.CacheDir,
+		CacheHandle:            c.CacheHandle,
 		DetectCharset:          c.DetectCharset,
 		DisallowedDomains:      c.DisallowedDomains,
 		ID:                     atomic.AddUint32(&collectorCounter, 1),

@@ -15,15 +15,11 @@
 package colly
 
 import (
-	"crypto/sha1"
-	"encoding/gob"
-	"encoding/hex"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"math/rand"
 	"net/http"
-	"os"
-	"path"
 	"regexp"
 	"sync"
 	"time"
@@ -126,41 +122,36 @@ func (h *httpBackend) GetMatchingRule(domain string) *LimitRule {
 	return nil
 }
 
-func (h *httpBackend) Cache(request *http.Request, bodySize int, cacheDir string) (*Response, error) {
-	if cacheDir == "" || request.Method != "GET" {
-		return h.Do(request, bodySize)
+func (h *httpBackend) Cache(
+	request *http.Request,
+	bodySize int,
+	cacheHandler func(*http.Request, func() (*Response, error)) (*Response, error),
+) (*Response, error) {
+	if request == nil {
+		return nil, fmt.Errorf("request must be given")
 	}
-	sum := sha1.Sum([]byte(request.URL.String()))
-	hash := hex.EncodeToString(sum[:])
-	dir := path.Join(cacheDir, hash[:2])
-	filename := path.Join(dir, hash)
-	if file, err := os.Open(filename); err == nil {
-		resp := new(Response)
-		err := gob.NewDecoder(file).Decode(resp)
-		file.Close()
-		if resp.StatusCode < 500 {
+
+	getter := func() (*Response, error) {
+		resp, err := h.Do(request, bodySize)
+		if err != nil || resp.StatusCode >= 500 {
 			return resp, err
 		}
+		return resp, nil
 	}
-	resp, err := h.Do(request, bodySize)
-	if err != nil || resp.StatusCode >= 500 {
-		return resp, err
+
+	var (
+		resp *Response
+		err  error
+	)
+	if cacheHandler == nil {
+		resp, err = getter()
+	} else {
+		resp, err = cacheHandler(request, getter)
 	}
-	if _, err := os.Stat(dir); err != nil {
-		if err := os.MkdirAll(dir, 0750); err != nil {
-			return resp, err
-		}
-	}
-	file, err := os.Create(filename + "~")
 	if err != nil {
-		return resp, err
+		return nil, err
 	}
-	if err := gob.NewEncoder(file).Encode(resp); err != nil {
-		file.Close()
-		return resp, err
-	}
-	file.Close()
-	return resp, os.Rename(filename+"~", filename)
+	return resp, nil
 }
 
 func (h *httpBackend) Do(request *http.Request, bodySize int) (*Response, error) {
